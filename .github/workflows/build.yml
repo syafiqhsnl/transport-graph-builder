@@ -1,0 +1,57 @@
+name: Build and Deploy OTP Graph
+
+on:
+  push:
+    paths:
+      - '**/*.zip'  # Trigger only when a zip file is pushed to this repo
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Data Repo
+      uses: actions/checkout@v3
+
+    - name: Set up Java 21
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Prepare Build Environment
+      run: |
+        mkdir otp-build
+        # Move the GTFS zip from repo to build folder
+        cp *.zip otp-build/
+        
+        # Download Malaysia Map (Fresh copy)
+        wget https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf -O otp-build/malaysia.osm.pbf
+        
+        # 👇 CORRECTED LINK FOR VERSION 2.5.0
+        wget https://repo1.maven.org/maven2/org/opentripplanner/otp/2.5.0/otp-2.5.0-shaded.jar -O otp.jar
+
+    - name: Build Graph (Heavy Lifting)
+      run: java -Xmx6G -jar otp.jar --build --save otp-build
+
+    - name: Transfer Graph to VPS
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        port: ${{ secrets.VPS_PORT }}
+        source: "otp-build/graph.obj"
+        target: "/home/student/public-transport/otp/otp-data"
+        strip_components: 1
+
+    - name: Restart OTP Docker
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USER }}
+        key: ${{ secrets.VPS_SSH_KEY }}
+        port: ${{ secrets.VPS_PORT }}
+        script: |
+          # Restart the specific container name defined in your docker-compose
+          docker restart transport_otp
